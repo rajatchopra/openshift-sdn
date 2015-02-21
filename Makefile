@@ -31,6 +31,9 @@ install:
 	rm -f /usr/bin/openshift-sdn-simple-setup-node.sh
 	cp -f $(OUT_DIR)/local/go/bin/openshift-sdn /usr/bin/
 	cp -f $(OUT_DIR)/local/go/bin/openshift-sdn-simple-setup-node.sh /usr/bin/
+	cp -f $(OUT_DIR)/local/go/bin/osdn-docker-run.sh /usr/bin/
+	cp -f $(OUT_DIR)/local/go/bin/gen_addr.py /usr/bin/
+	cp -f $(OUT_DIR)/local/go/bin/jq /usr/bin/
 
 # Remove all build artifacts.
 #

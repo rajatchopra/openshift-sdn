@@ -186,6 +186,7 @@ func (oc *OvsController) StartNode(sync, skipsetup bool) error {
 			}
 		}
 		exec.Command("ovs-ofctl", "-O", "OpenFlow13", "del-flows", "br0").CombinedOutput()
+		exec.Command("ovs-ofctl", "-O", "OpenFlow13", "add-flow", "br0", "cookie=0x0,table=0,priority=50,actions=output:2").CombinedOutput()
 		subnets, err := oc.subnetRegistry.GetSubnets()
 		if err != nil {
 			log.Errorf("Could not fetch existing subnets. %v", err)
@@ -268,16 +269,17 @@ func (oc *OvsController) Stop() {
 func (oc *OvsController) AddOFRules(minionIP, subnet string) {
 	cookie := generateCookie(minionIP)
 	if minionIP == oc.localIP {
+		return
 		// self, so add the input rules
-		iprule := fmt.Sprintf("table=0,cookie=0x%s,priority=200,ip,in_port=10,nw_dst=%s,actions=output:9", cookie, subnet)
-		arprule := fmt.Sprintf("table=0,cookie=0x%s,priority=200,arp,in_port=10,nw_dst=%s,actions=output:9", cookie, subnet)
+		iprule := fmt.Sprintf("table=0,cookie=0x%s,priority=200,ip,in_port=1,nw_dst=%s,actions=NORMAL", cookie, subnet)
+		arprule := fmt.Sprintf("table=0,cookie=0x%s,priority=200,arp,in_port=1,nw_dst=%s,actions=NORMAL", cookie, subnet)
 		o, e := exec.Command("ovs-ofctl", "-O", "OpenFlow13", "add-flow", "br0", iprule).CombinedOutput()
 		log.Infof("Output of adding %s: %s (%v)", iprule, o, e)
 		o, e = exec.Command("ovs-ofctl", "-O", "OpenFlow13", "add-flow", "br0", arprule).CombinedOutput()
 		log.Infof("Output of adding %s: %s (%v)", arprule, o, e)
 	} else {
-		iprule := fmt.Sprintf("table=0,cookie=0x%s,priority=200,ip,in_port=9,nw_dst=%s,actions=set_field:%s->tun_dst,output:10", cookie, subnet, minionIP)
-		arprule := fmt.Sprintf("table=0,cookie=0x%s,priority=200,arp,in_port=9,nw_dst=%s,actions=set_field:%s->tun_dst,output:10", cookie, subnet, minionIP)
+		iprule := fmt.Sprintf("table=0,cookie=0x%s,priority=100,ip,nw_dst=%s,actions=set_field:%s->tun_dst,output:1", cookie, subnet, minionIP)
+		arprule := fmt.Sprintf("table=0,cookie=0x%s,priority=100,arp,nw_dst=%s,actions=set_field:%s->tun_dst,output:1", cookie, subnet, minionIP)
 		o, e := exec.Command("ovs-ofctl", "-O", "OpenFlow13", "add-flow", "br0", iprule).CombinedOutput()
 		log.Infof("Output of adding %s: %s (%v)", iprule, o, e)
 		o, e = exec.Command("ovs-ofctl", "-O", "OpenFlow13", "add-flow", "br0", arprule).CombinedOutput()
@@ -296,8 +298,8 @@ func (oc *OvsController) DelOFRules(minion string) {
 		o, e = exec.Command("ovs-ofctl", "-O", "OpenFlow13", "del-flows", "br0", arprule).CombinedOutput()
 		log.Infof("Output of deleting local arp rules %s (%v)", o, e)
 	} else {
-		iprule := fmt.Sprintf("table=0,cookie=0x%s/0xffffffff,ip,in_port=9", cookie)
-		arprule := fmt.Sprintf("table=0,cookie=0x%s/0xffffffff,arp,in_port=9", cookie)
+		iprule := fmt.Sprintf("table=0,cookie=0x%s/0xffffffff,ip", cookie)
+		arprule := fmt.Sprintf("table=0,cookie=0x%s/0xffffffff,arp", cookie)
 		o, e := exec.Command("ovs-ofctl", "-O", "OpenFlow13", "del-flows", "br0", iprule).CombinedOutput()
 		log.Infof("Output of deleting %s: %s (%v)", iprule, o, e)
 		o, e = exec.Command("ovs-ofctl", "-O", "OpenFlow13", "del-flows", "br0", arprule).CombinedOutput()

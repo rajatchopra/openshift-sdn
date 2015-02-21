@@ -35,3 +35,6 @@ setup_env() {
 setup_env
 go install ${OSDN_GO_PACKAGE}
 cp -f ovs-simple/bin/openshift-sdn-simple-setup-node.sh ${OSDN_GOPATH}/bin
+cp -f ovs-simple/bin/osdn-docker-run.sh ${OSDN_GOPATH}/bin
+cp -f ovs-simple/bin/gen_addr.py ${OSDN_GOPATH}/bin
+cp -f ovs-simple/bin/jq ${OSDN_GOPATH}/bin
