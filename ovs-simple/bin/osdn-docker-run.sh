@@ -17,9 +17,6 @@ echo $ipaddr/$ipaddr_sub
 
 brctl delif docker0 $veth_host
 ovs-vsctl add-port br0 ${veth_host} 
-ovs_port=$(ovs-ofctl -O OpenFlow13 dump-ports-desc br0  | grep ${veth_host} | cut -d "(" -f 1 | tr -d ' ')
-ovs-ofctl -O OpenFlow13 add-flow br0 "table=0,cookie=0x${ovs_port},priority=100,ip,nw_dst=${new_ip},actions=output:${ovs_port}"
-ovs-ofctl -O OpenFlow13 add-flow br0 "table=0,cookie=0x${ovs_port},priority=100,arp,nw_dst=${new_ip},actions=output:${ovs_port}"
 
 del_ip_cmd="ip addr del $ipaddr/$ipaddr_sub dev eth0"
 nsenter -n -t $pid -- $del_ip_cmd
@@ -39,4 +36,3 @@ docker wait $cid || true
 docker rm -f $cid || true
 docker rm -f $net_container
 ovs-vsctl del-port $veth_host
-ovs-ofctl -O OpenFlow13 del-flows br0 "table=0,cookie=0x${ovs_port}/0xffffffff"

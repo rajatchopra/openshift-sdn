@@ -22,6 +22,9 @@ ip link set tap1 up
 ip route del $2 dev tap1 proto kernel scope link src $1 || true
 ip route add $3 dev tap1 proto kernel scope link src $1
 
+ovs-ofctl -O OpenFlow13 add-flow br0 "table=0,actions=learn(table=1, idle_timeout=900, NXM_OF_ETH_DST[]=NXM_OF_ETH_SRC[], output:NXM_OF_IN_PORT[]), resubmit(,1)"
+ovs-ofctl -O OpenFlow13 add-flow br0 "table=1,priority=0,actions=flood"
+
 ## iptables
 iptables -t nat -D POSTROUTING -s 10.1.0.0/16 ! -d 10.1.0.0/16 -j MASQUERADE || true
 iptables -t nat -A POSTROUTING -s 10.1.0.0/16 ! -d 10.1.0.0/16 -j MASQUERADE
