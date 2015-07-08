@@ -1,6 +1,14 @@
 #!/bin/bash
 set -ex
 
+## This file is called by kubelet/openshift-node when a pod is being created or destroyed
+# Its a synchronous call, which means the kubelet will wait for completion of this script
+# before it launches/destroys the containers of the pod.
+# This executable is called after the creation of infrastructure container of the pod and
+# before the creation of other containers of the pod, when pod is being created.
+# When the pod is being destroyed, the order of this hook's call is unspecified i.e.
+# the 'teardown' may be called before the other containers of the pod have been destroyed or after.
+
 lock_file=/var/lock/openshift-sdn.lock
 
 action=$1
@@ -19,35 +27,47 @@ Init() {
     true
 }
 
+# Setup is called when a pod is being created
+# The infrastructure container is assumed to be created and its docker-id is passed along
 Setup() {
+    # Get the cluster parameters
     source /etc/openshift-sdn/config.env
     cluster_subnet=${OPENSHIFT_CLUSTER_SUBNET}
     tap_ip=${OPENSHIFT_SDN_TAP1_ADDR}
 
+    # get info about the infra container
     pid=$(docker inspect --format "{{.State.Pid}}" ${net_container})
     network_mode=$(docker inspect --format "{{.HostConfig.NetworkMode}}" ${net_container})
     if [ "${network_mode}" == "host" ]; then
       # quit, nothing for the SDN here
       exit 0
     fi
+    # get the IP Address of the container as assigned by docker
     ipaddr=$(docker inspect --format "{{.NetworkSettings.IPAddress}}" ${net_container})
     new_ip=$ipaddr
     ipaddr_sub=$(docker inspect --format "{{.NetworkSettings.IPPrefixLen}}" ${net_container})
     docker_gateway=$(docker inspect --format "{{.NetworkSettings.Gateway}}" ${net_container})
+    # get the veth pair as created by docker
     veth_ifindex=$(nsenter -n -t $pid -- ethtool -S eth0 | sed -n -e 's/.*peer_ifindex: //p')
     veth_host=$(ip link show | sed -ne "s/^$veth_ifindex: \([^:]*\).*/\1/p")
 
+    # delete the veth pair's host end from the linux bridge
     brctl delif lbr0 $veth_host
+    # put it into OVS
     ovs-vsctl add-port br0 ${veth_host} 
+    # add the appropriate rules to OVS to manage the traffic to/fro the pod
     ovs_port=$(ovs-ofctl -O OpenFlow13 dump-ports-desc br0  | grep ${veth_host} | cut -d "(" -f 1 | tr -d ' ')
     ovs-ofctl -O OpenFlow13 add-flow br0 "table=0,cookie=0x${ovs_port},priority=100,ip,nw_dst=${new_ip},actions=output:${ovs_port}"
     ovs-ofctl -O OpenFlow13 add-flow br0 "table=0,cookie=0x${ovs_port},priority=100,arp,nw_dst=${new_ip},actions=output:${ovs_port}"
 
+    # change the container's routing table for any traffic meant for the pod overlay network
     add_subnet_route="ip route add ${cluster_subnet} dev eth0 proto kernel scope link src $ipaddr"
     nsenter -n -t $pid -- $add_subnet_route
 }
 
+# Teardown is called when a pod is scheduled to be destroyed
 Teardown() {
+    # Get the cluster's configuration
     source /etc/openshift-sdn/config.env
     cluster_subnet=${OPENSHIFT_CLUSTER_SUBNET}
     tap_ip=${OPENSHIFT_SDN_TAP1_ADDR}
@@ -58,10 +78,15 @@ Teardown() {
       # quit, nothing for the SDN here
       exit 0
     fi
+    # obtain the veth pair of the container as created by docker
     veth_ifindex=$(nsenter -n -t $pid -- ethtool -S eth0 | sed -n -e 's/.*peer_ifindex: //p')
     veth_host=$(ip link show | sed -ne "s/^$veth_ifindex: \([^:]*\).*/\1/p")
+    # learn the ovs port that this veth pair ends up as inside OVS 
+    # The OVS rules for this pod have a cookie based on this port number to uniquely identify the rules meant for this pod only
     ovs_port=$(ovs-ofctl -O OpenFlow13 dump-ports-desc br0  | grep ${veth_host} | cut -d "(" -f 1 | tr -d ' ')
+    # Delete the veth pair from OVS
     ovs-vsctl del-port $veth_host
+    # Delete all rules associated with the deleted ovs-port
     ovs-ofctl -O OpenFlow13 del-flows br0 "table=0,cookie=0x${ovs_port}/0xffffffff"
 }
 

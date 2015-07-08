@@ -1,5 +1,9 @@
 #!/bin/bash
 
+# This file is called upon when the openshift-sdn-node initializes
+# When openshift-sdn is used along with kubernetes as kube-hooks, this file is NOT called
+# openshift-v3 does not use the non-kube way, so this file does not get executed at all in openshift's lifecycle
+
 set -ex
 
 subnet_gateway=$1
@@ -8,12 +12,14 @@ container_network=$3
 subnet_mask_len=$4
 printf 'Container network is "%s"; local host has subnet "%s" and gateway "%s".\n' "${container_network}" "${subnet}" "${subnet_gateway}"
 
-## openvswitch
+## Configure openvswitch
 ovs-vsctl del-br br0 || true
 ovs-vsctl add-br br0 -- set Bridge br0 fail-mode=secure
 ovs-vsctl set bridge br0 protocols=OpenFlow13
+# configure a VxLAN port
 ovs-vsctl del-port br0 vxlan0 || true
 ovs-vsctl add-port br0 vxlan0 -- set Interface vxlan0 type=vxlan options:remote_ip="flow" options:key="flow" ofport_request=10
+# connect the linux bridge with OVS
 ip link del vlinuxbr || true
 ip link add vlinuxbr type veth peer name vovsbr
 ip link set vlinuxbr up
@@ -24,31 +30,34 @@ ip link set vovsbr txqueuelen 0
 ovs-vsctl del-port br0 vovsbr || true
 ovs-vsctl add-port br0 vovsbr -- set Interface vovsbr ofport_request=9
 
-## linux bridge
+## Configure the linux bridge with the new subnet meant for this node
 ip link set lbr0 down || true
 brctl delbr lbr0 || true
 brctl addbr lbr0
 ip addr add ${subnet_gateway}/${subnet_mask_len} dev lbr0
 ip link set lbr0 up
 brctl addif lbr0 vlinuxbr
+# Remove host's routing table entry for the subnet and replace with the route for the entire pod overlay network
 ip route del ${subnet} dev lbr0 proto kernel scope link src ${subnet_gateway} || true
 ip route add ${container_network} dev lbr0 proto kernel scope link src ${subnet_gateway}
 
 
-## iptables
+## Configure iptables for NAT'ing non-pod traffic e.g. internet
 iptables -t nat -D POSTROUTING -s ${container_network} ! -d ${container_network} -j MASQUERADE || true
 iptables -t nat -A POSTROUTING -s ${container_network} ! -d ${container_network} -j MASQUERADE
+# Allow vxlan traffic
 iptables -D INPUT -p udp -m multiport --dports 4789 -m comment --comment "001 vxlan incoming" -j ACCEPT || true
 iptables -D INPUT -i lbr0 -m comment --comment "traffic from docker" -j ACCEPT || true
 lineno=$(iptables -nvL INPUT --line-numbers | grep "state RELATED,ESTABLISHED" | awk '{print $1}')
 iptables -I INPUT $lineno -p udp -m multiport --dports 4789 -m comment --comment "001 vxlan incoming" -j ACCEPT
+# Allow other traffic
 iptables -I INPUT $((lineno+1)) -i lbr0 -m comment --comment "traffic from docker" -j ACCEPT
 fwd_lineno=$(iptables -nvL FORWARD --line-numbers | grep "reject-with icmp-host-prohibited" | tail -n 1 | awk '{print $1}')
 iptables -I FORWARD $fwd_lineno -d ${container_network} -j ACCEPT
 iptables -I FORWARD $fwd_lineno -s ${container_network} -j ACCEPT
 
 
-## docker
+## Re-configure docker with the new linux bridge
 if [[ -z "${DOCKER_NETWORK_OPTIONS}" ]]
 then
     DOCKER_NETWORK_OPTIONS='-b=lbr0 --mtu=1450'
