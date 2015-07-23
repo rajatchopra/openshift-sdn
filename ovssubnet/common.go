@@ -212,27 +212,37 @@ func (oc *OvsController) ServeExistingMinions() error {
 	return nil
 }
 
-func (oc *OvsController) AddNode(minion string) error {
-	sn, err := oc.subnetAllocator.GetNetwork()
-	if err != nil {
-		log.Errorf("Error creating network for minion %s.", minion)
-		return err
-	}
+func (*oc *OvsController) getMinionIP(minion string) (string, error) {
 	var minionIP string
 	ip := net.ParseIP(minion)
 	if ip == nil {
 		addrs, err := net.LookupIP(minion)
 		if err != nil {
 			log.Errorf("Failed to lookup IP address for minion %s: %v", minion, err)
-			return err
+			return "", err
 		}
 		minionIP = addrs[0].String()
 		if minionIP == "" {
-			return fmt.Errorf("Failed to obtain IP address from minion label: %s", minion)
+			return "", fmt.Errorf("Failed to obtain IP address from minion label: %s", minion)
 		}
 	} else {
 		minionIP = ip.String()
 	}
+	return minionIP, nil
+}
+
+func (oc *OvsController) AddNode(minion string) error {
+	sn, err := oc.subnetAllocator.GetNetwork()
+	if err != nil {
+		log.Errorf("Error creating network for minion %s.", minion)
+		return err
+	}
+
+	minionIP, err := oc.getMinionIP(minion)
+	if err != nil {
+		return err
+	}
+
 	sub := &api.Subnet{
 		Minion: minionIP,
 		Sub:    sn.String(),
@@ -362,10 +372,25 @@ func (oc *OvsController) watchMinions() {
 		case ev := <-minevent:
 			switch ev.Type {
 			case api.Added:
-				_, err := oc.subnetRegistry.GetSubnet(ev.Minion)
+				sub, err := oc.subnetRegistry.GetSubnet(ev.Minion)
 				if err != nil {
 					// subnet does not exist already
 					oc.AddNode(ev.Minion)
+				} else {
+					// get IP of the minion
+					ip, err := oc.getMinionIP(ev.Minion)
+					if err != nil {
+						glog.Errorf("Error calculating IP address of node %s", ev.Minion)
+						continue
+					}
+					if sub.Minion != ip {
+						sub.Minion = ip
+						err = oc.subnetRegistry.UpdateSubnet(sub)
+						if err != nil {
+							glog.Errorf("Error updating subnet for node %s, ip %s", ev.Minion, ip)
+							continue
+						}
+					}
 				}
 			case api.Deleted:
 				oc.DeleteNode(ev.Minion)
