@@ -212,23 +212,25 @@ func (oc *OvsController) ServeExistingMinions() error {
 	return nil
 }
 
-func (*oc *OvsController) getMinionIP(minion string) (string, error) {
-	var minionIP string
-	ip := net.ParseIP(minion)
+func (oc *OvsController) getNodeIP(node string) (string, error) {
+	ip := net.ParseIP(node)
 	if ip == nil {
 		addrs, err := net.LookupIP(minion)
 		if err != nil {
 			log.Errorf("Failed to lookup IP address for minion %s: %v", minion, err)
 			return "", err
 		}
-		minionIP = addrs[0].String()
-		if minionIP == "" {
-			return "", fmt.Errorf("Failed to obtain IP address from minion label: %s", minion)
+		for _, addr := range addrs {
+			if addr.String() != "127.0.0.1" {
+				ip = addr
+				break
+			}
 		}
-	} else {
-		minionIP = ip.String()
 	}
-	return minionIP, nil
+	if ip == nil || len(ip.String()) == 0 {
+		return "", fmt.Errorf("Failed to obtain IP address from node label: %s", node)
+	}
+	return ip.String(), nil
 }
 
 func (oc *OvsController) AddNode(minion string) error {
@@ -247,7 +249,7 @@ func (oc *OvsController) AddNode(minion string) error {
 		Minion: minionIP,
 		Sub:    sn.String(),
 	}
-	oc.subnetRegistry.CreateSubnet(minion, sub)
+	err = oc.subnetRegistry.CreateSubnet(minion, sub)
 	if err != nil {
 		log.Errorf("Error writing subnet to etcd for minion %s: %v", minion, sn)
 		return err
@@ -380,14 +382,19 @@ func (oc *OvsController) watchMinions() {
 					// get IP of the minion
 					ip, err := oc.getMinionIP(ev.Minion)
 					if err != nil {
-						glog.Errorf("Error calculating IP address of node %s", ev.Minion)
+						log.Errorf("Error calculating IP address of node %s", ev.Minion)
 						continue
 					}
 					if sub.Minion != ip {
-						sub.Minion = ip
-						err = oc.subnetRegistry.UpdateSubnet(sub)
+						err = oc.subnetRegistry.DeleteSubnet(ev.Minion)
 						if err != nil {
-							glog.Errorf("Error updating subnet for node %s, ip %s", ev.Minion, ip)
+							log.Errorf("Error deleting subnet for node %s, old ip %s", ev.Minion, sub.Minion)
+							continue
+						}
+						sub.Minion = ip
+						err = oc.subnetRegistry.CreateSubnet(ev.Minion, sub)
+						if err != nil {
+							log.Errorf("Error creating subnet for node %s, ip %s", ev.Minion, sub.Minion)
 							continue
 						}
 					}
