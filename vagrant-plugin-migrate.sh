@@ -21,8 +21,8 @@ sudo systemctl daemon-reload 2>/dev/null
 sudo systemctl restart openshift-master 2>/dev/null
 "
 
-for i in `seq 1 $OPENSHIFT_NUM_MINIONS`; do
-  node_name=minion-$i
+for i in `seq 1 $OPENSHIFT_NUM_NODES`; do
+  node_name=node-$i
   vagrant ssh $node_name -c "
 sudo sed -ie s/openshift-ovs-$old_plugin/openshift-ovs-$new_plugin/g /openshift.local.config/node-openshift-$node_name/node-config.yaml 2>/dev/null
 sudo systemctl daemon-reload 2>/dev/null
