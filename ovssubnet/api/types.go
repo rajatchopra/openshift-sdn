@@ -40,8 +40,9 @@ type SubnetEvent struct {
 }
 
 type NodeEvent struct {
-	Type EventType
-	Node string
+	Type   EventType
+	Node   string
+	NodeIP string
 }
 
 type Subnet struct {
