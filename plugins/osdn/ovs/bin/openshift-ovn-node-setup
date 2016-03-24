@@ -1,0 +1,12 @@
+#!/bin/bash
+
+masterIP=$1
+nodeIP=$2
+
+cd /home/vagrant/ovs
+sudo /usr/local/share/openvswitch/scripts/ovs-ctl --system-id=random start
+sudo /usr/local/share/openvswitch/scripts/ovn-ctl start_controller
+
+sudo /usr/local/bin/ovs-vsctl set open . external-ids:ovn-remote=tcp:${masterIP}:6640
+sudo /usr/local/bin/ovs-vsctl set open . external-ids:ovn-encap-type=geneve
+sudo /usr/local/bin/ovs-vsctl set open . external-ids:ovn-encap-ip=${nodeIP}

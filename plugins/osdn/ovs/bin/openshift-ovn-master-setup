@@ -1,0 +1,16 @@
+#!/bin/bash
+
+selfIP=$1
+
+OVN_SB_DB=tcp:${selfIP}:6640
+
+sudo /usr/local/share/openvswitch/scripts/ovs-ctl --system-id=random start
+sudo /usr/local/share/openvswitch/scripts/ovn-ctl start_northd
+sudo /usr/local/share/openvswitch/scripts/ovn-ctl start_controller
+sudo /usr/local/bin/ovs-appctl -t ovsdb-server ovsdb-server/add-remote ptcp:6640:${selfIP}
+
+sudo /usr/local/bin/ovs-vsctl set open . external-ids:ovn-remote=tcp:${selfIP}:6640
+sudo /usr/local/bin/ovs-vsctl set open . external-ids:ovn-encap-type=geneve
+sudo /usr/local/bin/ovs-vsctl set open . external-ids:ovn-encap-ip=${selfIP}
+
+sudo /usr/local/bin/ovn-nbctl lswitch-add sw0

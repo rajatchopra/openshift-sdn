@@ -21,6 +21,7 @@ type ovsPlugin struct {
 	osdn.OvsController
 
 	multitenant bool
+	ovn         bool
 }
 
 func SingleTenantPluginName() string {
@@ -31,8 +32,12 @@ func MultiTenantPluginName() string {
 	return "redhat/openshift-ovs-multitenant"
 }
 
-func CreatePlugin(registry *osdn.Registry, multitenant bool, hostname string, selfIP string) (api.OsdnPlugin, api.FilteringEndpointsConfigHandler, error) {
-	plugin := &ovsPlugin{multitenant: multitenant}
+func OvnPluginName() string {
+	return "redhat/openshift-ovn"
+}
+
+func CreatePlugin(registry *osdn.Registry, multitenant bool, ovn bool, hostname string, selfIP string) (api.OsdnPlugin, api.FilteringEndpointsConfigHandler, error) {
+	plugin := &ovsPlugin{multitenant: multitenant, ovn: ovn}
 
 	err := plugin.BaseInit(registry, NewFlowController(multitenant), plugin, hostname, selfIP)
 	if err != nil {
@@ -57,11 +62,17 @@ func (plugin *ovsPlugin) PluginStartMaster(clusterNetwork *net.IPNet, hostSubnet
 		}
 	}
 
+	if plugin.ovn {
+		if err := plugin.OVNStartMaster(); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
 func (plugin *ovsPlugin) PluginStartNode(mtu uint) error {
-	networkChanged, err := plugin.SubnetStartNode(mtu)
+	networkChanged, err := plugin.SubnetStartNode(mtu, plugin.ovn)
 	if err != nil {
 		return err
 	}
@@ -98,6 +109,9 @@ const (
 )
 
 func (plugin *ovsPlugin) getExecutable() string {
+	if plugin.ovn {
+		return "openshift-ovn"
+	}
 	return "openshift-sdn-ovs"
 }
 
@@ -106,6 +120,9 @@ func (plugin *ovsPlugin) Init(host knetwork.Host) error {
 }
 
 func (plugin *ovsPlugin) Name() string {
+	if plugin.ovn {
+		return OvnPluginName()
+	}
 	if plugin.multitenant {
 		return MultiTenantPluginName()
 	} else {

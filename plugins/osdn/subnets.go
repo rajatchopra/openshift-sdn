@@ -99,7 +99,7 @@ func (oc *OvsController) deleteNode(nodeName string) error {
 	return oc.Registry.DeleteSubnet(nodeName)
 }
 
-func (oc *OvsController) SubnetStartNode(mtu uint) (bool, error) {
+func (oc *OvsController) SubnetStartNode(mtu uint, ovn bool) (bool, error) {
 	err := oc.initSelfSubnet()
 	if err != nil {
 		return false, err
@@ -111,9 +111,13 @@ func (oc *OvsController) SubnetStartNode(mtu uint) (bool, error) {
 		log.Errorf("Failed to obtain ClusterNetwork: %v", err)
 		return false, err
 	}
-	networkChanged, err := oc.flowController.Setup(oc.localSubnet.SubnetCIDR, clusterNetwork.String(), servicesNetwork.String(), mtu)
+	networkChanged, err := oc.flowController.Setup(oc.localSubnet.SubnetCIDR, clusterNetwork.String(), servicesNetwork.String(), mtu, ovn)
 	if err != nil {
 		return false, err
+	}
+
+	if ovn {
+		return true, nil
 	}
 
 	getSubnets := func(registry *Registry) (interface{}, string, error) {

@@ -1,0 +1,103 @@
+#!/bin/bash
+
+OVN_BRIDGE="br-int"
+
+lock_file=/var/lock/openshift-sdn.lock
+
+action=$1
+net_container=$2
+tenant_id=$3
+ingress_bw=$4
+egress_bw=$5
+
+lockwrap() {
+    (
+    flock 200
+    "$@"
+    ) 200>${lock_file}
+}
+
+# Retrieve the name of the host-local member of the veth pair that
+# connects the container (identified by pid) to the docker bridge.
+get_veth_host() {
+    local pid=$1
+
+    local veth_ifindex=$(nsenter -n -t $pid -- ethtool -S eth0 | sed -n -e 's/.*peer_ifindex: //p')
+    # Strip a suffix starting with '@' from the interface name.
+    # The suffixed interface name won't be recognized by brctl or ovs-*
+    ip link show | sed -ne "s/^$veth_ifindex: \([^:@]*\).*/\1/p"
+}
+
+get_ipaddr_pid_veth() {
+    network_mode=$(docker inspect --format "{{.HostConfig.NetworkMode}}" ${net_container})
+    if [ "${network_mode}" == "host" ]; then
+      # quit, nothing for the SDN here
+      exit 0
+    elif [[ "${network_mode}" =~ container:.* ]]; then
+      # Get pod infra container
+      net_container=$(echo ${network_mode} | cut -d ":" -f 2)
+    fi
+    ipaddr=$(docker inspect --format "{{.NetworkSettings.IPAddress}}" ${net_container})
+    pid=$(docker inspect --format "{{.State.Pid}}" ${net_container})
+    veth_host=$(get_veth_host $pid)
+}
+
+add_ovs_port() {
+    brctl delif lbr0 $veth_host
+    ovs-vsctl add-port br0 ${veth_host}
+}
+
+del_ovs_port() {
+    ovs-vsctl --if-exists del-port ${veth_host}
+}
+
+ovn() {
+
+	PATH=$PATH:/usr/local/bin
+
+	CONTAINER_ID=${net_container}
+	CONTAINER_IP4_ADDR=$(sudo docker inspect --format '{{ .NetworkSettings.IPAddress }}' $CONTAINER_ID)
+	IPHEX=$(printf '00:00:'; printf '%02X:' ${CONTAINER_IP4_ADDR//./ }; echo)
+	CONTAINER_MAC_ADDR=${IPHEX::-1}
+	CONTAINER_CIDR_ADDR=$(sudo docker inspect --format '{{ .NetworkSettings.IPPrefixLen }}' $CONTAINER_ID)
+	CONTAINER_PID=$(sudo docker inspect --format '{{ .State.Pid }}' $CONTAINER_ID)
+	echo "$CONTAINER_NAME: $CONTAINER_MAC_ADDR $CONTAINER_IP4_ADDR $CONTAINER_CIDR_ADDR $CONTAINER_PID"
+
+	# set up flow for container
+	sudo nsenter --target $CONTAINER_PID --net ip link set dev eth0 mtu 1450
+	sudo nsenter --target $CONTAINER_PID --net ip link set dev eth0 address $CONTAINER_MAC_ADDR
+
+	# hack to register the port in northbound db
+	sshpass -p vagrant ssh -o StrictHostKeyChecking=no vagrant@${MASTER_IP} sudo /usr/local/bin/ovn-nbctl lport-add sw0 $CONTAINER_ID
+	sshpass -p vagrant ssh -o StrictHostKeyChecking=no vagrant@${MASTER_IP} sudo /usr/local/bin/ovn-nbctl lport-set-addresses $CONTAINER_ID "$CONTAINER_MAC_ADDR $CONTAINER_IP4_ADDR"
+
+	sudo /usr/local/bin/ovs-vsctl add-port br-int vethe1 -- set Interface vethe1 external_ids:iface-id=$CONTAINER_NAME
+	sudo nsenter --target $CONTAINER_PID --net ip link set dev eth0 up
+}
+
+run() {
+    get_ipaddr_pid_veth
+    source /run/openshift-sdn/config.env
+    source /run/openshift-ovn/master.env
+
+    case "$action" in
+	setup)
+	    add_ovs_port
+	    ovn
+	    ;;
+
+	update)
+	    ;;
+
+	teardown)
+	    del_ovs_port
+	    ;;
+
+	*)
+            echo "Bad input: $@"
+            exit 1
+    esac
+}
+
+lockwrap run
+
